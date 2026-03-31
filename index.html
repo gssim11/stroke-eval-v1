@@ -60,6 +60,9 @@
         const Lightbulb = ({ size = 24, className = "" }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.9 1.2 1.5 1.5 2.5"></path><path d="M9 18h6"></path><path d="M10 22h4"></path></svg>
         );
+        const Target = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>
+        );
 
         // ==========================================
         // LocalStorage 안전 로드 유틸리티
@@ -531,6 +534,47 @@
                 );
             };
 
+            // ==========================================
+            // [추가] 통합 종합 결과 해석(Clinical Reasoning) 로직
+            // ==========================================
+            const generateClinicalReasoning = () => {
+                // 데이터가 하나도 입력되지 않은 경우 제외
+                if (fmaTotal === 0 && bbsTotal === 0 && !masScore && !brsScore.arm) return null;
+
+                let motorStatus = "";
+                let balanceStatus = "";
+                let plans = [];
+
+                // 1. 손상(Impairment) 및 운동 제어 수준 추론 (FMA, BRS 기준)
+                if (fmaTotal < 40 || (brsScore.arm && brsScore.arm <= 3)) {
+                    motorStatus = "비정상적인 공동운동(Synergy) 패턴이 우세하고, 수의적 분리운동이 심하게 제한된 상태입니다.";
+                    plans.push("과도한 근긴장도(Spasticity) 억제 및 수동관절운동을 통한 구축(Contracture) 예방");
+                    plans.push("비정상적 연합반응 억제 및 기본적인 체간/근위부 안정성 확보");
+                } else if (fmaTotal < 80 || (brsScore.arm && brsScore.arm === 4)) {
+                    motorStatus = "공동운동 패턴에서 점차 벗어나 부분적인 분리운동(Isolated movement)이 나타나는 중등도 회복 단계입니다.";
+                    plans.push("개별 관절의 수의적 분리운동 촉진 및 선택적 근력 강화");
+                    plans.push("일상생활동작(ADL)에 특화된 목표 지향적 훈련(Goal-oriented training) 도입");
+                } else {
+                    motorStatus = "개별 관절의 독립적인 움직임과 정상에 가까운 협응력이 관찰되는 경미한 손상 단계입니다.";
+                    plans.push("환측 원위부의 정밀한 미세 운동(Fine motor) 및 고위 운동 제어 훈련");
+                    plans.push("실제 환경에서의 속도와 정확성을 요구하는 복합 운동 훈련");
+                }
+
+                // 2. 활동(Activity) 및 균형 수준 추론 (BBS 기준)
+                if (bbsTotal < 21) {
+                    balanceStatus = "정적 자세 유지가 어려워 일상생활에서 전적인 물리적 보조가 요구되는 낙상 초고위험 상태입니다.";
+                    plans.push("침상 및 휠체어 등 지지면이 넓은 상태에서의 체간 안정화(Trunk stability) 훈련 우선 시행");
+                } else if (bbsTotal < 45) {
+                    balanceStatus = "보행 보조기(Cane/Walker)나 감독 하에 제한적 이동이 가능하나 잠재적 낙상 위험이 존재합니다.";
+                    plans.push("체중 이동(Weight shifting) 및 선 자세에서의 동적 균형(Dynamic balance) 훈련 필수 포함");
+                } else {
+                    balanceStatus = "비교적 안정적인 동적 균형 능력을 갖추어 독립적인 지역사회 보행이 기대되는 상태입니다.";
+                    plans.push("지역사회 복귀를 위한 이중 과제(Dual-task) 및 변화하는 환경에서의 야외 보행 훈련");
+                }
+
+                return { motorStatus, balanceStatus, plans };
+            };
+
             const renderSummary = () => {
                 let bbsAlert = "";
                 let bbsColor = "text-slate-600";
@@ -548,6 +592,8 @@
                     else if (fmaTotal <= 95) fmaAlert = "경미한 손상 (Mild) - 분리운동 및 협응력 호전";
                     else fmaAlert = "정상 범위 (Normal)";
                 }
+
+                const reasoning = generateClinicalReasoning();
 
                 const ResultCard = ({ title, score, max, alert, color, icon: Icon, children }) => (
                     <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 mb-4">
@@ -633,6 +679,34 @@
 
                             <ResultCard title="BBS (균형 및 낙상)" score={bbsTotal} max="56" alert={bbsAlert} color="orange" icon={Scale} />
                             
+                            {/* 종합 임상 추론 파트 추가 */}
+                            {reasoning && (
+                                <div className="bg-blue-50/80 p-5 rounded-2xl shadow-sm border border-blue-200 mb-4 mt-6">
+                                    <h3 className="text-[15px] sm:text-lg font-bold text-blue-900 mb-4 flex items-center pb-3 border-b border-blue-200">
+                                        <Target size={22} className="mr-2 flex-shrink-0 text-blue-600" /> 통합 임상 추론 및 중재 방향 (SOAP: A/P)
+                                    </h3>
+                                    <div className="space-y-4 text-sm text-blue-900 leading-relaxed">
+                                        <div>
+                                            <strong className="block text-blue-800 mb-1">📌 환자 기능 상태 종합 (Assessment)</strong>
+                                            <p className="pl-2 border-l-2 border-blue-400 text-slate-700 mb-2">
+                                                {reasoning.motorStatus}
+                                            </p>
+                                            <p className="pl-2 border-l-2 border-blue-400 text-slate-700">
+                                                {reasoning.balanceStatus}
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <strong className="block text-blue-800 mb-2">🎯 우선순위 물리치료 중재 방향 (Plan)</strong>
+                                            <ul className="list-disc pl-5 space-y-1.5 text-slate-700 font-medium">
+                                                {reasoning.plans.map((plan, i) => (
+                                                    <li key={i}>{plan}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="bg-amber-50 p-5 rounded-2xl shadow-sm border border-amber-200 mb-4 mt-6">
                                 <h3 className="text-[15px] sm:text-lg font-bold text-amber-800 mb-3 flex items-center">
                                     <Lightbulb size={20} className="mr-2 flex-shrink-0" /> 학생 임상 실습 가이드 (FMA 손목/손 평가)
