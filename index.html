@@ -1,692 +1,750 @@
-import React, { useState, useEffect } from 'react';
-import { Activity, LayoutList, ListChecks, Scale, BarChart, AlertCircle, CheckCircle2, RotateCcw, Download, Loader, Lightbulb } from 'lucide-react';
-
-// LocalStorage 안전 로드 유틸리티
-const loadState = (key, defaultVal) => {
-  try {
-    const saved = localStorage.getItem(key);
-    return saved !== null ? JSON.parse(saved) : defaultVal;
-  } catch (e) {
-    console.warn("LocalStorage 접근 실패:", e);
-    return defaultVal;
-  }
-};
-
-export default function App() {
-  const [activeTab, setActiveTab] = useState('MAS');
-  const [isExporting, setIsExporting] = useState(false);
-
-  // --- State for Assessments (LocalStorage 연동) ---
-  const [masScore, setMasScore] = useState(() => loadState('stroke_mas', null));
-  const [brsScore, setBrsScore] = useState(() => loadState('stroke_brs', { arm: null, hand: null, leg: null }));
-  const [fmaUE, setFmaUE] = useState(() => loadState('stroke_fmaUE', Array(33).fill(null)));
-  const [fmaLE, setFmaLE] = useState(() => loadState('stroke_fmaLE', Array(17).fill(null)));
-  const [bbsScore, setBbsScore] = useState(() => loadState('stroke_bbs', Array(14).fill(null)));
-
-  // --- 데이터 자동 저장 (상태 변경 시) ---
-  useEffect(() => {
-    try {
-      localStorage.setItem('stroke_mas', JSON.stringify(masScore));
-      localStorage.setItem('stroke_brs', JSON.stringify(brsScore));
-      localStorage.setItem('stroke_fmaUE', JSON.stringify(fmaUE));
-      localStorage.setItem('stroke_fmaLE', JSON.stringify(fmaLE));
-      localStorage.setItem('stroke_bbs', JSON.stringify(bbsScore));
-    } catch (e) {
-      console.warn("LocalStorage 저장 실패:", e);
-    }
-  }, [masScore, brsScore, fmaUE, fmaLE, bbsScore]);
-
-  // --- Handlers ---
-  const handleReset = () => {
-    if (window.confirm('새로운 환자 평가를 위해 모든 데이터를 초기화하시겠습니까?')) {
-      setMasScore(null);
-      setBrsScore({ arm: null, hand: null, leg: null });
-      setFmaUE(Array(33).fill(null));
-      setFmaLE(Array(17).fill(null));
-      setBbsScore(Array(14).fill(null));
-      setActiveTab('MAS');
-      window.scrollTo(0, 0);
-    }
-  };
-
-  const handleBbsChange = (index, value) => {
-    const newScores = [...bbsScore];
-    newScores[index] = value;
-    setBbsScore(newScores);
-  };
-
-  const handleFmaUEChange = (index, value) => {
-    const newScores = [...fmaUE];
-    newScores[index] = value;
-    setFmaUE(newScores);
-  };
-
-  const handleFmaLEChange = (index, value) => {
-    const newScores = [...fmaLE];
-    newScores[index] = value;
-    setFmaLE(newScores);
-  };
-
-  // --- 이미지 저장 로직 (html2canvas 동적 로드) ---
-  const exportToImage = async () => {
-    const element = document.getElementById('result-summary-capture');
-    if (!element) return;
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Stroke Evaluation (Evidence-Based Assessment)</title>
     
-    setIsExporting(true);
-    try {
-      if (!window.html2canvas) {
-        await new Promise((resolve, reject) => {
-          const script = document.createElement('script');
-          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-          script.onload = resolve;
-          script.onerror = reject;
-          document.head.appendChild(script);
-        });
-      }
-      
-      const canvas = await window.html2canvas(element, { 
-        scale: 2, 
-        backgroundColor: '#f8fafc',
-        useCORS: true
-      });
-      
-      const dataUrl = canvas.toDataURL('image/png');
-      const link = document.createElement('a');
-      link.download = `Stroke_Eval_${new Date().toISOString().slice(0,10)}.png`;
-      link.href = dataUrl;
-      link.click();
-    } catch (err) {
-      console.error("Image export failed:", err);
-      alert("이미지 저장 중 오류가 발생했습니다.");
-    } finally {
-      setIsExporting(false);
-    }
-  };
+    <!-- 브라우저에서 실시간으로 Tailwind CSS를 적용하기 위한 CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React 및 ReactDOM CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- JSX 컴파일을 위한 Babel CDN -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- 이미지 저장을 위한 html2canvas CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body class="bg-slate-50 antialiased text-slate-900">
+    <div id="root"></div>
 
-  // --- Calculations ---
-  const bbsTotal = bbsScore.reduce((acc, curr) => acc + (curr || 0), 0);
-  const fmaUETotal = fmaUE.reduce((acc, curr) => acc + (curr || 0), 0);
-  const fmaLETotal = fmaLE.reduce((acc, curr) => acc + (curr || 0), 0);
-  const fmaTotal = fmaUETotal + fmaLETotal;
+    <script type="text/babel">
+        const { useState, useEffect } = React;
 
-  // --- UI Components ---
-  const TabButton = ({ id, icon: Icon, label }) => (
-    <button
-      onClick={() => { setActiveTab(id); window.scrollTo(0, 0); }}
-      className={`flex flex-col items-center justify-center w-full py-3 space-y-1 transition-colors ${
-        activeTab === id ? 'text-blue-600 border-t-2 border-blue-600 bg-blue-50/50' : 'text-slate-500 hover:text-slate-800'
-      }`}
-    >
-      <Icon size={20} strokeWidth={activeTab === id ? 2.5 : 2} />
-      <span className="text-[10px] sm:text-xs font-semibold">{label}</span>
-    </button>
-  );
+        // ==========================================
+        // 아이콘 SVG 컴포넌트 (외부 종속성 제거를 위한 하드코딩)
+        // ==========================================
+        const Activity = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+        );
+        const LayoutList = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="3" y="14" width="7" height="7"></rect><rect x="3" y="3" width="7" height="7"></rect><line x1="14" y1="4" x2="21" y2="4"></line><line x1="14" y1="9" x2="21" y2="9"></line><line x1="14" y1="15" x2="21" y2="15"></line><line x1="14" y1="20" x2="21" y2="20"></line></svg>
+        );
+        const ListChecks = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="3 6 4 7 6 5"></polyline><line x1="10" y1="6" x2="21" y2="6"></line><polyline points="3 12 4 13 6 11"></polyline><line x1="10" y1="12" x2="21" y2="12"></line><polyline points="3 18 4 19 6 17"></polyline><line x1="10" y1="18" x2="21" y2="18"></line></svg>
+        );
+        const Scale = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="12" y1="3" x2="12" y2="21"></line><line x1="9" y1="21" x2="15" y2="21"></line><polyline points="5 8 12 3 19 8"></polyline><polyline points="3 15 5 8 7 15 3 15"></polyline><polyline points="17 15 19 8 21 15 17 15"></polyline></svg>
+        );
+        const BarChart = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="12" y1="20" x2="12" y2="10"></line><line x1="18" y1="20" x2="18" y2="4"></line><line x1="6" y1="20" x2="6" y2="16"></line></svg>
+        );
+        const AlertCircle = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+        );
+        const CheckCircle2 = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"></circle><polyline points="9 12 12 15 15 9"></polyline></svg>
+        );
+        const RotateCcw = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+        );
+        const Download = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        );
+        const Loader = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>
+        );
+        const Lightbulb = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.9 1.2 1.5 1.5 2.5"></path><path d="M9 18h6"></path><path d="M10 22h4"></path></svg>
+        );
 
-  const ScoreButton = ({ selected, onClick, label, desc, colorClass = "blue" }) => (
-    <button
-      onClick={onClick}
-      className={`w-full text-left p-4 mb-2 rounded-xl border-2 transition-all duration-200 ${
-        selected
-          ? `border-${colorClass}-500 bg-${colorClass}-50 shadow-sm ring-1 ring-${colorClass}-500`
-          : 'border-slate-200 bg-white hover:border-slate-300'
-      }`}
-    >
-      <div className="flex items-center justify-between">
-        <div>
-          <span className={`font-bold text-lg ${selected ? `text-${colorClass}-700` : 'text-slate-700'}`}>
-            {label}
-          </span>
-          {desc && <p className={`text-sm mt-1 ${selected ? `text-${colorClass}-600` : 'text-slate-500'}`}>{desc}</p>}
-        </div>
-        {selected && <CheckCircle2 className={`text-${colorClass}-500`} size={24} />}
-      </div>
-    </button>
-  );
+        // ==========================================
+        // LocalStorage 안전 로드 유틸리티
+        // ==========================================
+        const loadState = (key, defaultVal) => {
+            try {
+                const saved = localStorage.getItem(key);
+                return saved !== null ? JSON.parse(saved) : defaultVal;
+            } catch (e) {
+                console.warn("LocalStorage 접근 실패:", e);
+                return defaultVal;
+            }
+        };
 
-  // --- Views ---
-  const renderMAS = () => {
-    const masOptions = [
-      { val: '0', label: 'Grade 0', desc: '근긴장도의 증가가 없음 (정상)' },
-      { val: '1', label: 'Grade 1', desc: '관절가동범위 끝에서 약간의 저항 (Catch & Release)' },
-      { val: '1+', label: 'Grade 1+', desc: '관절가동범위 1/2 이하에서 저항 발생 후 유지 (Catch & Resistance)' },
-      { val: '2', label: 'Grade 2', desc: 'ROM 대부분에서 뚜렷한 근긴장도 증가 (수동적 움직임은 용이함)' },
-      { val: '3', label: 'Grade 3', desc: '심한 근긴장도 증가 (수동적 움직임이 어려움)' },
-      { val: '4', label: 'Grade 4', desc: '강직 (Rigid), 굽힘 또는 폄 상태로 고정됨' },
-    ];
+        // ==========================================
+        // 메인 App 컴포넌트
+        // ==========================================
+        function App() {
+            const [activeTab, setActiveTab] = useState('MAS');
+            const [isExporting, setIsExporting] = useState(false);
 
-    return (
-      <div className="p-4 sm:p-6 pb-6 max-w-2xl mx-auto animation-fade-in">
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">MAS (Modified Ashworth Scale)</h2>
-        <p className="text-slate-600 mb-6 text-sm">수동 관절가동범위 검사를 통해 속도의존성 근긴장도를 평가합니다. 빠른 속도(1초 내)로 검사하십시오.</p>
-        
-        <div className="space-y-2">
-          {masOptions.map((opt) => (
-            <ScoreButton
-              key={opt.val}
-              selected={masScore === opt.val}
-              onClick={() => setMasScore(opt.val)}
-              label={opt.label}
-              desc={opt.desc}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  };
+            // --- State for Assessments (LocalStorage 연동) ---
+            const [masScore, setMasScore] = useState(() => loadState('stroke_mas', null));
+            const [brsScore, setBrsScore] = useState(() => loadState('stroke_brs', { arm: null, hand: null, leg: null }));
+            const [fmaUE, setFmaUE] = useState(() => loadState('stroke_fmaUE', Array(33).fill(null)));
+            const [fmaLE, setFmaLE] = useState(() => loadState('stroke_fmaLE', Array(17).fill(null)));
+            const [bbsScore, setBbsScore] = useState(() => loadState('stroke_bbs', Array(14).fill(null)));
 
-  const renderBRS = () => {
-    const stages = [
-      { val: 1, label: 'Stage 1', desc: '이완기 (Flaccidity) - 수의적 움직임 완전 소실' },
-      { val: 2, label: 'Stage 2', desc: '경직 발생, 미세한 수의적 움직임 또는 연합반응' },
-      { val: 3, label: 'Stage 3', desc: '경직 최고조, 수의적으로 공동운동(Synergy) 패턴만 가능' },
-      { val: 4, label: 'Stage 4', desc: '경직 감소, 공동운동에서 벗어난 일부 분리운동 시작' },
-      { val: 5, label: 'Stage 5', desc: '복합적이고 독립적인 관절 움직임 가능' },
-      { val: 6, label: 'Stage 6', desc: '정상에 가까운 분리운동 및 속도/협응' },
-    ];
+            // --- 데이터 자동 저장 (상태 변경 시) ---
+            useEffect(() => {
+                try {
+                    localStorage.setItem('stroke_mas', JSON.stringify(masScore));
+                    localStorage.setItem('stroke_brs', JSON.stringify(brsScore));
+                    localStorage.setItem('stroke_fmaUE', JSON.stringify(fmaUE));
+                    localStorage.setItem('stroke_fmaLE', JSON.stringify(fmaLE));
+                    localStorage.setItem('stroke_bbs', JSON.stringify(bbsScore));
+                } catch (e) {
+                    console.warn("LocalStorage 저장 실패:", e);
+                }
+            }, [masScore, brsScore, fmaUE, fmaLE, bbsScore]);
 
-    const Section = ({ title, part }) => (
-      <div className="mb-8 bg-slate-50 p-4 rounded-2xl border border-slate-200">
-        <h3 className="text-lg font-bold text-slate-800 mb-4">{title}</h3>
-        {stages.map((opt) => (
-          <ScoreButton
-            key={opt.val}
-            selected={brsScore[part] === opt.val}
-            onClick={() => setBrsScore({ ...brsScore, [part]: opt.val })}
-            label={opt.label}
-            desc={opt.desc}
-            colorClass="indigo"
-          />
-        ))}
-      </div>
-    );
+            // --- Handlers ---
+            const handleReset = () => {
+                if (window.confirm('새로운 환자 평가를 위해 모든 데이터를 초기화하시겠습니까?')) {
+                    setMasScore(null);
+                    setBrsScore({ arm: null, hand: null, leg: null });
+                    setFmaUE(Array(33).fill(null));
+                    setFmaLE(Array(17).fill(null));
+                    setBbsScore(Array(14).fill(null));
+                    setActiveTab('MAS');
+                    window.scrollTo(0, 0);
+                }
+            };
 
-    return (
-      <div className="p-4 sm:p-6 pb-6 max-w-2xl mx-auto animation-fade-in">
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">BRS (Brunnstrom Recovery Stage)</h2>
-        <p className="text-slate-600 mb-6 text-sm">비정상적 공동운동(Synergy)에서 분리운동으로 이행되는 신경학적 회복 단계를 정성적으로 평가합니다.</p>
-        <Section title="상지 (Arm)" part="arm" />
-        <Section title="손 (Hand)" part="hand" />
-        <Section title="하지 (Leg)" part="leg" />
-      </div>
-    );
-  };
+            const handleBbsChange = (index, value) => {
+                const newScores = [...bbsScore];
+                newScores[index] = value;
+                setBbsScore(newScores);
+            };
 
-  const renderFMA = () => {
-    const fmaUEData = [
-      {
-        section: 'I. 반사 (Reflex)',
-        items: [
-          { idx: 0, label: '두갈래근 및 손가락굽힘근 (Biceps & finger flexors)' },
-          { idx: 1, label: '세갈래근 (Triceps)' }
-        ]
-      },
-      {
-        section: 'II. 굽힘근 공동운동 (Flexor Synergy)',
-        items: [
-          { idx: 2, label: '어깨 뒤당김 (Shoulder retraction)' },
-          { idx: 3, label: '어깨 올림 (Shoulder elevation)' },
-          { idx: 4, label: '어깨 90° 벌림 (Shoulder abduction)' },
-          { idx: 5, label: '어깨 가쪽돌림 (Shoulder external rotation)' },
-          { idx: 6, label: '팔꿈치 굽힘 (Elbow flexion)' },
-          { idx: 7, label: '아래팔 뒤침 (Forearm supination)' }
-        ]
-      },
-      {
-        section: 'II. 폄근 공동운동 (Extensor Synergy)',
-        items: [
-          { idx: 8, label: '어깨 모음/안쪽돌림 (Shoulder add/internal rot)' },
-          { idx: 9, label: '팔꿈치 폄 (Elbow extension)' },
-          { idx: 10, label: '아래팔 엎침 (Forearm pronation)' }
-        ]
-      },
-      {
-        section: 'III. 시너지 결합 움직임',
-        items: [
-          { idx: 11, label: '손 허리뼈로 가져가기 (Hand to lumbar spine)' },
-          { idx: 12, label: '어깨 0-90° 굽힘 (팔꿈치 폄 유지)' },
-          { idx: 13, label: '아래팔 엎침/뒤침 (팔꿈치 90° 굽힘 유지)' }
-        ]
-      },
-      {
-        section: 'IV. 시너지 분리 움직임',
-        items: [
-          { idx: 14, label: '어깨 0-90° 벌림 (팔꿈치 폄, 아래팔 중립)' },
-          { idx: 15, label: '어깨 90-180° 굽힘 (팔꿈치 폄, 아래팔 중립)' },
-          { idx: 16, label: '아래팔 엎침/뒤침 (팔꿈치 폄 유지)' }
-        ]
-      },
-      {
-        section: 'V. 정상 반사',
-        items: [
-          { idx: 17, label: '과항진된 반사 소실 확인 (0:항진, 1:약간항진, 2:정상)' }
-        ]
-      },
-      {
-        section: 'B. 손목 (Wrist)',
-        items: [
-          { idx: 18, label: '15° 손등굽힘 유지 (팔꿈치 90° 굽힘)' },
-          { idx: 19, label: '손등/손바닥굽힘 반복운동 (팔꿈치 90° 굽힘)' },
-          { idx: 20, label: '15° 손등굽힘 유지 (팔꿈치 0° 폄)' },
-          { idx: 21, label: '손등/손바닥굽힘 반복운동 (팔꿈치 0° 폄)' },
-          { idx: 22, label: '손목 휘돌림 (Circumduction)' }
-        ]
-      },
-      {
-        section: 'C. 손 (Hand)',
-        items: [
-          { idx: 23, label: '집단 굽힘 (Mass flexion)' },
-          { idx: 24, label: '집단 폄 (Mass extension)' },
-          { idx: 25, label: '갈고리 쥐기 (Hook grasp)' },
-          { idx: 26, label: '측면 쥐기 (엄지 모음/Lateral prehension)' },
-          { idx: 27, label: '연필 쥐기 (집게 쥐기/Pincer grasp)' },
-          { idx: 28, label: '원통형 쥐기 (Cylinder grasp)' },
-          { idx: 29, label: '구형 쥐기 (Spherical grasp - 테니스공)' }
-        ]
-      },
-      {
-        section: 'D. 협응과 속도 (Coord/Speed)',
-        items: [
-          { idx: 30, label: '떨림 (Tremor) - 0:심함 / 1:약간 / 2:없음' },
-          { idx: 31, label: '측정장애 (Dysmetria) - 0:심함 / 1:약간 / 2:없음' },
-          { idx: 32, label: '시간 (Time) - 0:>6초 지연 / 1:2~5초 지연 / 2:<2초 차이' }
-        ]
-      }
-    ];
+            const handleFmaUEChange = (index, value) => {
+                const newScores = [...fmaUE];
+                newScores[index] = value;
+                setFmaUE(newScores);
+            };
 
-    const fmaLEData = [
-      {
-        section: 'I. 반사 (Reflex)',
-        items: [
-          { idx: 0, label: '무릎관절 굽힘근 (Knee flexors)' },
-          { idx: 1, label: '무릎/아킬레스 폄근 반사 (Extensors)' }
-        ]
-      },
-      {
-        section: 'II. 굽힘근 공동운동 (Flexor Synergy)',
-        items: [
-          { idx: 2, label: '엉덩관절 굽힘 (Hip flexion)' },
-          { idx: 3, label: '무릎관절 굽힘 (Knee flexion)' },
-          { idx: 4, label: '발목관절 발등굽힘 (Ankle dorsiflexion)' }
-        ]
-      },
-      {
-        section: 'II. 폄근 공동운동 (Extensor Synergy)',
-        items: [
-          { idx: 5, label: '엉덩관절 폄 (Hip extension)' },
-          { idx: 6, label: '엉덩관절 모음 (Hip adduction)' },
-          { idx: 7, label: '무릎관절 폄 (Knee extension)' },
-          { idx: 8, label: '발목관절 발바닥굽힘 (Ankle plantar flexion)' }
-        ]
-      },
-      {
-        section: 'III. 시너지 결합 움직임 (앉은 자세)',
-        items: [
-          { idx: 9, label: '무릎관절 굽힘 (90° 이상 능동 굽힘)' },
-          { idx: 10, label: '발목관절 발등굽힘 (Ankle dorsiflexion)' }
-        ]
-      },
-      {
-        section: 'IV. 시너지 분리 움직임 (선 자세)',
-        items: [
-          { idx: 11, label: '무릎관절 90° 굽힘 (엉덩관절 폄 유지)' },
-          { idx: 12, label: '발목관절 발등굽힘 (Ankle dorsiflexion)' }
-        ]
-      },
-      {
-        section: 'V. 정상 반사',
-        items: [
-          { idx: 13, label: '과항진된 반사 소실 확인 (0:항진, 1:활발, 2:정상)' }
-        ]
-      },
-      {
-        section: 'F. 협응과 속도 (Coord/Speed)',
-        items: [
-          { idx: 14, label: '떨림 (Tremor) - 0:심함 / 1:약간 / 2:없음' },
-          { idx: 15, label: '측정장애 (Dysmetria) - 0:심함 / 1:약간 / 2:없음' },
-          { idx: 16, label: '시간 (Time) - 0:>6초 지연 / 1:2~5초 지연 / 2:<2초 차이' }
-        ]
-      }
-    ];
+            const handleFmaLEChange = (index, value) => {
+                const newScores = [...fmaLE];
+                newScores[index] = value;
+                setFmaLE(newScores);
+            };
 
-    const ScorePill = ({ val, current, onClick, typeColor }) => (
-      <button
-        onClick={onClick}
-        className={`flex-1 py-1.5 text-[13px] sm:text-sm font-bold rounded border transition-colors ${
-          current === val 
-            ? `bg-${typeColor}-500 border-${typeColor}-600 text-white shadow-inner` 
-            : 'bg-white border-slate-300 text-slate-500 hover:bg-slate-50'
-        }`}
-      >
-        {val}점
-      </button>
-    );
+            // --- 이미지 저장 로직 ---
+            const exportToImage = async () => {
+                const element = document.getElementById('result-summary-capture');
+                if (!element) return;
+                
+                setIsExporting(true);
+                try {
+                    const canvas = await window.html2canvas(element, { 
+                        scale: 2, 
+                        backgroundColor: '#f8fafc',
+                        useCORS: true
+                    });
+                    
+                    const dataUrl = canvas.toDataURL('image/png');
+                    const link = document.createElement('a');
+                    link.download = `Stroke_Eval_${new Date().toISOString().slice(0,10)}.png`;
+                    link.href = dataUrl;
+                    link.click();
+                } catch (err) {
+                    console.error("Image export failed:", err);
+                    alert("이미지 저장 중 오류가 발생했습니다.");
+                } finally {
+                    setIsExporting(false);
+                }
+            };
 
-    return (
-      <div className="p-4 sm:p-6 pb-6 max-w-2xl mx-auto animation-fade-in">
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">FMA (Fugl-Meyer Assessment)</h2>
-        <p className="text-slate-600 mb-4 text-sm">운동 기능 정량 평가의 표준 지표입니다. (총점: 상지 66점 + 하지 34점 = 100점)</p>
+            // --- Calculations ---
+            const bbsTotal = bbsScore.reduce((acc, curr) => acc + (curr || 0), 0);
+            const fmaUETotal = fmaUE.reduce((acc, curr) => acc + (curr || 0), 0);
+            const fmaLETotal = fmaLE.reduce((acc, curr) => acc + (curr || 0), 0);
+            const fmaTotal = fmaUETotal + fmaLETotal;
 
-        <div className="sticky top-0 bg-white/95 backdrop-blur-md py-3 sm:py-4 border-b border-slate-200 z-10 flex justify-between items-end mb-6 shadow-sm">
-          <div>
-            <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Score</div>
-            <div className="text-3xl font-extrabold text-teal-600">{fmaTotal} <span className="text-lg text-slate-400">/ 100</span></div>
-          </div>
-          <div className="text-right text-xs sm:text-sm">
-            <span className="text-slate-500">상지: </span><span className="font-bold text-teal-700">{fmaUETotal}</span>
-            <span className="mx-2 text-slate-300">|</span>
-            <span className="text-slate-500">하지: </span><span className="font-bold text-indigo-700">{fmaLETotal}</span>
-          </div>
-        </div>
-
-        <h3 className="text-lg font-bold text-teal-800 mb-4 flex items-center bg-teal-50 p-3 rounded-lg"><Activity size={20} className="mr-2"/> 상지 부문 (Upper Extremity)</h3>
-        <div className="space-y-6 mb-10">
-          {fmaUEData.map((section, sIdx) => (
-            <div key={`ue-sec-${sIdx}`} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="bg-slate-50 border-b border-slate-200 px-4 py-2 text-sm font-bold text-teal-700">
-                {section.section}
-              </div>
-              <div className="px-4 py-2">
-                {section.items.map((item, iIdx) => (
-                  <div key={`ue-item-${item.idx}`} className={`flex flex-col sm:flex-row sm:items-center justify-between py-3 ${iIdx !== section.items.length - 1 ? 'border-b border-slate-100' : ''}`}>
-                    <div className="text-[13px] sm:text-sm font-medium text-slate-700 mb-2 sm:mb-0 sm:pr-4 flex-1">
-                      {item.label}
-                    </div>
-                    <div className="flex space-x-1 w-full sm:w-48 flex-shrink-0">
-                      {[0, 1, 2].map((val) => (
-                         <ScorePill key={val} val={val} current={fmaUE[item.idx]} onClick={() => handleFmaUEChange(item.idx, val)} typeColor="teal" />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <h3 className="text-lg font-bold text-indigo-800 mb-4 flex items-center bg-indigo-50 p-3 rounded-lg"><Activity size={20} className="mr-2"/> 하지 부문 (Lower Extremity)</h3>
-        <div className="space-y-6">
-          {fmaLEData.map((section, sIdx) => (
-            <div key={`le-sec-${sIdx}`} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="bg-slate-50 border-b border-slate-200 px-4 py-2 text-sm font-bold text-indigo-700">
-                {section.section}
-              </div>
-              <div className="px-4 py-2">
-                {section.items.map((item, iIdx) => (
-                  <div key={`le-item-${item.idx}`} className={`flex flex-col sm:flex-row sm:items-center justify-between py-3 ${iIdx !== section.items.length - 1 ? 'border-b border-slate-100' : ''}`}>
-                    <div className="text-[13px] sm:text-sm font-medium text-slate-700 mb-2 sm:mb-0 sm:pr-4 flex-1">
-                      {item.label}
-                    </div>
-                    <div className="flex space-x-1 w-full sm:w-48 flex-shrink-0">
-                      {[0, 1, 2].map((val) => (
-                         <ScorePill key={val} val={val} current={fmaLE[item.idx]} onClick={() => handleFmaLEChange(item.idx, val)} typeColor="indigo" />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  const renderBBS = () => {
-    const bbsItems = [
-      "1. 앉기에서 일어서기", "2. 잡지 않고 서 있기", "3. 등받이 기대지 않고 앉기", 
-      "4. 서기에서 앉기", "5. 이동(Transfer)", "6. 눈 감고 서 있기", 
-      "7. 두 발 모아 서 있기", "8. 팔 앞으로 뻗기", "9. 바닥의 물건 줍기", 
-      "10. 좌우 뒤돌아보기", "11. 360도 회전", "12. 발판에 발 번갈아 올리기", 
-      "13. 한 발 앞에 두고 서기 (Tandem)", "14. 한 발 서기"
-    ];
-
-    return (
-      <div className="p-4 sm:p-6 pb-6 max-w-2xl mx-auto animation-fade-in">
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">BBS (Berg Balance Scale)</h2>
-        <p className="text-slate-600 mb-4 text-sm">동적/정적 균형 및 낙상 위험도를 평가합니다. (총 56점)</p>
-
-        <div className="sticky top-0 bg-white/90 backdrop-blur-md py-4 border-b border-slate-200 z-10 flex justify-between items-center mb-6">
-          <div className="text-sm font-bold text-slate-500 uppercase tracking-wider">Total Score</div>
-          <div className="text-3xl font-extrabold text-orange-600">{bbsTotal} <span className="text-lg text-slate-400">/ 56</span></div>
-        </div>
-
-        <div className="space-y-4">
-          {bbsItems.map((label, idx) => (
-            <div key={idx} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-              <div className="text-sm font-bold text-slate-800 mb-3">{label}</div>
-              <div className="flex space-x-1 sm:space-x-2">
-                {[0, 1, 2, 3, 4].map((val) => (
-                  <button
-                    key={val}
-                    onClick={() => handleBbsChange(idx, val)}
-                    className={`flex-1 py-2 sm:py-3 text-sm font-bold rounded border transition-all ${
-                      bbsScore[idx] === val 
-                        ? 'bg-orange-500 border-orange-600 text-white shadow-md transform scale-105' 
-                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+            // --- UI Components ---
+            const TabButton = ({ id, icon: Icon, label }) => (
+                <button
+                    onClick={() => { setActiveTab(id); window.scrollTo(0, 0); }}
+                    className={`flex flex-col items-center justify-center w-full py-3 space-y-1 transition-colors ${
+                        activeTab === id ? 'text-blue-600 border-t-2 border-blue-600 bg-blue-50/50' : 'text-slate-500 hover:text-slate-800'
                     }`}
-                  >
-                    {val}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
+                >
+                    <Icon size={20} className={activeTab === id ? "stroke-[2.5px]" : "stroke-2"} />
+                    <span className="text-[10px] sm:text-xs font-semibold">{label}</span>
+                </button>
+            );
 
-  const renderSummary = () => {
-    let bbsAlert = "";
-    let bbsColor = "text-slate-600";
-    if (bbsTotal > 0) {
-      if (bbsTotal < 21) { bbsAlert = "낙상 초고위험군 (휠체어 의존 및 전적인 보조 필요)"; bbsColor = "text-red-600"; }
-      else if (bbsTotal < 41) { bbsAlert = "낙상 중등도 위험 (보행 보조기 및 감독 필요)"; bbsColor = "text-orange-600"; }
-      else if (bbsTotal < 45) { bbsAlert = "잠재적 낙상 위험군 (균형 훈련 필수 포함)"; bbsColor = "text-yellow-600"; }
-      else { bbsAlert = "낙상 저위험 (독립적인 지역사회 보행 가능)"; bbsColor = "text-green-600"; }
-    }
+            const ScoreButton = ({ selected, onClick, label, desc, colorClass = "blue" }) => (
+                <button
+                    onClick={onClick}
+                    className={`w-full text-left p-4 mb-2 rounded-xl border-2 transition-all duration-200 ${
+                        selected
+                            ? `border-${colorClass}-500 bg-${colorClass}-50 shadow-sm ring-1 ring-${colorClass}-500`
+                            : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                >
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <span className={`font-bold text-lg ${selected ? `text-${colorClass}-700` : 'text-slate-700'}`}>
+                                {label}
+                            </span>
+                            {desc && <p className={`text-sm mt-1 ${selected ? `text-${colorClass}-600` : 'text-slate-500'}`}>{desc}</p>}
+                        </div>
+                        {selected && <CheckCircle2 className={`text-${colorClass}-500 flex-shrink-0`} size={24} />}
+                    </div>
+                </button>
+            );
 
-    let fmaAlert = "";
-    if (fmaTotal > 0) {
-      if (fmaTotal <= 49) fmaAlert = "심각한 운동 기능 손상 (Severe) - 공동운동 의존";
-      else if (fmaTotal <= 84) fmaAlert = "중등도 손상 (Moderate) - 분리운동 시작 단계";
-      else if (fmaTotal <= 95) fmaAlert = "경미한 손상 (Mild) - 분리운동 및 협응력 호전";
-      else fmaAlert = "정상 범위 (Normal)";
-    }
+            // --- Views ---
+            const renderMAS = () => {
+                const masOptions = [
+                    { val: '0', label: 'Grade 0', desc: '근긴장도의 증가가 없음 (정상)' },
+                    { val: '1', label: 'Grade 1', desc: '관절가동범위 끝에서 약간의 저항 (Catch & Release)' },
+                    { val: '1+', label: 'Grade 1+', desc: '관절가동범위 1/2 이하에서 저항 발생 후 유지 (Catch & Resistance)' },
+                    { val: '2', label: 'Grade 2', desc: 'ROM 대부분에서 뚜렷한 근긴장도 증가 (수동적 움직임은 용이함)' },
+                    { val: '3', label: 'Grade 3', desc: '심한 근긴장도 증가 (수동적 움직임이 어려움)' },
+                    { val: '4', label: 'Grade 4', desc: '강직 (Rigid), 굽힘 또는 폄 상태로 고정됨' },
+                ];
 
-    const ResultCard = ({ title, score, max, alert, color, icon: Icon, children }) => (
-      <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 mb-4">
-        <div className="flex items-center mb-4">
-          <div className={`p-2 rounded-lg bg-${color}-50 text-${color}-600 mr-3`}>
-            <Icon size={24} />
-          </div>
-          <h3 className="text-xl font-bold text-slate-800">{title}</h3>
-        </div>
-        
-        {score !== null && max && (
-          <div className="flex items-end mb-2">
-            <span className={`text-4xl font-extrabold text-${color}-600 leading-none`}>{score}</span>
-            <span className="text-lg text-slate-400 ml-1 mb-1">/ {max}</span>
-          </div>
-        )}
-        
-        {alert && (
-          <div className={`mt-3 p-3 rounded-lg bg-${color}-50 border border-${color}-100 flex items-start`}>
-            <AlertCircle size={18} className={`mr-2 flex-shrink-0 mt-0.5 text-${color}-600`} />
-            <p className={`text-sm font-semibold ${bbsColor === 'text-red-600' && title === 'BBS' ? 'text-red-700' : `text-${color}-800`}`}>
-              {alert}
-            </p>
-          </div>
-        )}
-        {children}
-      </div>
-    );
+                return (
+                    <div className="p-4 sm:p-6 pb-6 max-w-2xl mx-auto animation-fade-in">
+                        <h2 className="text-2xl font-bold text-slate-800 mb-2">MAS (Modified Ashworth Scale)</h2>
+                        <p className="text-slate-600 mb-6 text-sm">수동 관절가동범위 검사를 통해 속도의존성 근긴장도를 평가합니다. 빠른 속도(1초 내)로 검사하십시오.</p>
+                        
+                        <div className="space-y-2">
+                            {masOptions.map((opt) => (
+                                <ScoreButton
+                                    key={opt.val}
+                                    selected={masScore === opt.val}
+                                    onClick={() => setMasScore(opt.val)}
+                                    label={opt.label}
+                                    desc={opt.desc}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                );
+            };
 
-    return (
-      <div className="p-4 sm:p-6 pb-6 max-w-2xl mx-auto animation-fade-in bg-slate-50 min-h-screen">
-        <h2 className="text-2xl font-extrabold text-slate-800 mb-6 flex items-center">
-          <BarChart className="mr-2 text-blue-600" /> 임상 평가 결과 요약
-        </h2>
+            const renderBRS = () => {
+                const stages = [
+                    { val: 1, label: 'Stage 1', desc: '이완기 (Flaccidity) - 수의적 움직임 완전 소실' },
+                    { val: 2, label: 'Stage 2', desc: '경직 발생, 미세한 수의적 움직임 또는 연합반응' },
+                    { val: 3, label: 'Stage 3', desc: '경직 최고조, 수의적으로 공동운동(Synergy) 패턴만 가능' },
+                    { val: 4, label: 'Stage 4', desc: '경직 감소, 공동운동에서 벗어난 일부 분리운동 시작' },
+                    { val: 5, label: 'Stage 5', desc: '복합적이고 독립적인 관절 움직임 가능' },
+                    { val: 6, label: 'Stage 6', desc: '정상에 가까운 분리운동 및 속도/협응' },
+                ];
 
-        {/* 이미지 내보내기 버튼 */}
-        <button 
-          onClick={exportToImage} 
-          disabled={isExporting}
-          className={`w-full mb-6 py-4 px-4 rounded-xl flex items-center justify-center font-bold text-white transition-all shadow-md
-            ${isExporting ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 active:scale-[0.98]'}`}
-        >
-          {isExporting ? (
-            <><Loader className="animate-spin mr-2" size={22} /> 이미지 생성 중...</>
-          ) : (
-            <><Download className="mr-2" size={22} /> 이 화면을 이미지로 저장하기</>
-          )}
-        </button>
+                const Section = ({ title, part }) => (
+                    <div className="mb-8 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                        <h3 className="text-lg font-bold text-slate-800 mb-4">{title}</h3>
+                        {stages.map((opt) => (
+                            <ScoreButton
+                                key={opt.val}
+                                selected={brsScore[part] === opt.val}
+                                onClick={() => setBrsScore({ ...brsScore, [part]: opt.val })}
+                                label={opt.label}
+                                desc={opt.desc}
+                                colorClass="indigo"
+                            />
+                        ))}
+                    </div>
+                );
 
-        {/* 캡처할 영역 지정 */}
-        <div id="result-summary-capture" className="p-2 -m-2 bg-slate-50 rounded-xl">
-          <ResultCard title="MAS (근긴장도)" color="blue" icon={Activity}>
-            {masScore ? (
-              <p className="text-lg font-bold text-blue-700 mt-2">Grade {masScore}</p>
-            ) : <p className="text-sm text-slate-400">평가 데이터가 없습니다.</p>}
-          </ResultCard>
+                return (
+                    <div className="p-4 sm:p-6 pb-6 max-w-2xl mx-auto animation-fade-in">
+                        <h2 className="text-2xl font-bold text-slate-800 mb-2">BRS (Brunnstrom Recovery Stage)</h2>
+                        <p className="text-slate-600 mb-6 text-sm">비정상적 공동운동(Synergy)에서 분리운동으로 이행되는 신경학적 회복 단계를 정성적으로 평가합니다.</p>
+                        <Section title="상지 (Arm)" part="arm" />
+                        <Section title="손 (Hand)" part="hand" />
+                        <Section title="하지 (Leg)" part="leg" />
+                    </div>
+                );
+            };
 
-          <ResultCard title="BRS (회복 단계)" color="indigo" icon={LayoutList}>
-            {brsScore.arm || brsScore.hand || brsScore.leg ? (
-              <div className="grid grid-cols-3 gap-2 mt-3">
-                <div className="bg-indigo-50 p-3 rounded-lg text-center">
-                  <div className="text-xs text-indigo-500 font-bold mb-1">상지</div>
-                  <div className="text-xl font-extrabold text-indigo-700">{brsScore.arm || '-'}</div>
+            const renderFMA = () => {
+                const fmaUEData = [
+                    {
+                        section: 'I. 반사 (Reflex)',
+                        items: [
+                            { idx: 0, label: '두갈래근 및 손가락굽힘근 (Biceps & finger flexors)' },
+                            { idx: 1, label: '세갈래근 (Triceps)' }
+                        ]
+                    },
+                    {
+                        section: 'II. 굽힘근 공동운동 (Flexor Synergy)',
+                        items: [
+                            { idx: 2, label: '어깨 뒤당김 (Shoulder retraction)' },
+                            { idx: 3, label: '어깨 올림 (Shoulder elevation)' },
+                            { idx: 4, label: '어깨 90° 벌림 (Shoulder abduction)' },
+                            { idx: 5, label: '어깨 가쪽돌림 (Shoulder external rotation)' },
+                            { idx: 6, label: '팔꿈치 굽힘 (Elbow flexion)' },
+                            { idx: 7, label: '아래팔 뒤침 (Forearm supination)' }
+                        ]
+                    },
+                    {
+                        section: 'II. 폄근 공동운동 (Extensor Synergy)',
+                        items: [
+                            { idx: 8, label: '어깨 모음/안쪽돌림 (Shoulder add/internal rot)' },
+                            { idx: 9, label: '팔꿈치 폄 (Elbow extension)' },
+                            { idx: 10, label: '아래팔 엎침 (Forearm pronation)' }
+                        ]
+                    },
+                    {
+                        section: 'III. 시너지 결합 움직임',
+                        items: [
+                            { idx: 11, label: '손 허리뼈로 가져가기 (Hand to lumbar spine)' },
+                            { idx: 12, label: '어깨 0-90° 굽힘 (팔꿈치 폄 유지)' },
+                            { idx: 13, label: '아래팔 엎침/뒤침 (팔꿈치 90° 굽힘 유지)' }
+                        ]
+                    },
+                    {
+                        section: 'IV. 시너지 분리 움직임',
+                        items: [
+                            { idx: 14, label: '어깨 0-90° 벌림 (팔꿈치 폄, 아래팔 중립)' },
+                            { idx: 15, label: '어깨 90-180° 굽힘 (팔꿈치 폄, 아래팔 중립)' },
+                            { idx: 16, label: '아래팔 엎침/뒤침 (팔꿈치 폄 유지)' }
+                        ]
+                    },
+                    {
+                        section: 'V. 정상 반사',
+                        items: [
+                            { idx: 17, label: '과항진된 반사 소실 확인 (0:항진, 1:약간항진, 2:정상)' }
+                        ]
+                    },
+                    {
+                        section: 'B. 손목 (Wrist)',
+                        items: [
+                            { idx: 18, label: '15° 손등굽힘 유지 (팔꿈치 90° 굽힘)' },
+                            { idx: 19, label: '손등/손바닥굽힘 반복운동 (팔꿈치 90° 굽힘)' },
+                            { idx: 20, label: '15° 손등굽힘 유지 (팔꿈치 0° 폄)' },
+                            { idx: 21, label: '손등/손바닥굽힘 반복운동 (팔꿈치 0° 폄)' },
+                            { idx: 22, label: '손목 휘돌림 (Circumduction)' }
+                        ]
+                    },
+                    {
+                        section: 'C. 손 (Hand)',
+                        items: [
+                            { idx: 23, label: '집단 굽힘 (Mass flexion)' },
+                            { idx: 24, label: '집단 폄 (Mass extension)' },
+                            { idx: 25, label: '갈고리 쥐기 (Hook grasp)' },
+                            { idx: 26, label: '측면 쥐기 (엄지 모음/Lateral prehension)' },
+                            { idx: 27, label: '연필 쥐기 (집게 쥐기/Pincer grasp)' },
+                            { idx: 28, label: '원통형 쥐기 (Cylinder grasp)' },
+                            { idx: 29, label: '구형 쥐기 (Spherical grasp - 테니스공)' }
+                        ]
+                    },
+                    {
+                        section: 'D. 협응과 속도 (Coord/Speed)',
+                        items: [
+                            { idx: 30, label: '떨림 (Tremor) - 0:심함 / 1:약간 / 2:없음' },
+                            { idx: 31, label: '측정장애 (Dysmetria) - 0:심함 / 1:약간 / 2:없음' },
+                            { idx: 32, label: '시간 (Time) - 0:>6초 지연 / 1:2~5초 지연 / 2:<2초 차이' }
+                        ]
+                    }
+                ];
+
+                const fmaLEData = [
+                    {
+                        section: 'I. 반사 (Reflex)',
+                        items: [
+                            { idx: 0, label: '무릎관절 굽힘근 (Knee flexors)' },
+                            { idx: 1, label: '무릎/아킬레스 폄근 반사 (Extensors)' }
+                        ]
+                    },
+                    {
+                        section: 'II. 굽힘근 공동운동 (Flexor Synergy)',
+                        items: [
+                            { idx: 2, label: '엉덩관절 굽힘 (Hip flexion)' },
+                            { idx: 3, label: '무릎관절 굽힘 (Knee flexion)' },
+                            { idx: 4, label: '발목관절 발등굽힘 (Ankle dorsiflexion)' }
+                        ]
+                    },
+                    {
+                        section: 'II. 폄근 공동운동 (Extensor Synergy)',
+                        items: [
+                            { idx: 5, label: '엉덩관절 폄 (Hip extension)' },
+                            { idx: 6, label: '엉덩관절 모음 (Hip adduction)' },
+                            { idx: 7, label: '무릎관절 폄 (Knee extension)' },
+                            { idx: 8, label: '발목관절 발바닥굽힘 (Ankle plantar flexion)' }
+                        ]
+                    },
+                    {
+                        section: 'III. 시너지 결합 움직임 (앉은 자세)',
+                        items: [
+                            { idx: 9, label: '무릎관절 굽힘 (90° 이상 능동 굽힘)' },
+                            { idx: 10, label: '발목관절 발등굽힘 (Ankle dorsiflexion)' }
+                        ]
+                    },
+                    {
+                        section: 'IV. 시너지 분리 움직임 (선 자세)',
+                        items: [
+                            { idx: 11, label: '무릎관절 90° 굽힘 (엉덩관절 폄 유지)' },
+                            { idx: 12, label: '발목관절 발등굽힘 (Ankle dorsiflexion)' }
+                        ]
+                    },
+                    {
+                        section: 'V. 정상 반사',
+                        items: [
+                            { idx: 13, label: '과항진된 반사 소실 확인 (0:항진, 1:활발, 2:정상)' }
+                        ]
+                    },
+                    {
+                        section: 'F. 협응과 속도 (Coord/Speed)',
+                        items: [
+                            { idx: 14, label: '떨림 (Tremor) - 0:심함 / 1:약간 / 2:없음' },
+                            { idx: 15, label: '측정장애 (Dysmetria) - 0:심함 / 1:약간 / 2:없음' },
+                            { idx: 16, label: '시간 (Time) - 0:>6초 지연 / 1:2~5초 지연 / 2:<2초 차이' }
+                        ]
+                    }
+                ];
+
+                const ScorePill = ({ val, current, onClick, typeColor }) => (
+                    <button
+                        onClick={onClick}
+                        className={`flex-1 py-1.5 text-[13px] sm:text-sm font-bold rounded border transition-colors ${
+                            current === val 
+                                ? `bg-${typeColor}-500 border-${typeColor}-600 text-white shadow-inner` 
+                                : 'bg-white border-slate-300 text-slate-500 hover:bg-slate-50'
+                        }`}
+                    >
+                        {val}점
+                    </button>
+                );
+
+                return (
+                    <div className="p-4 sm:p-6 pb-6 max-w-2xl mx-auto animation-fade-in">
+                        <h2 className="text-2xl font-bold text-slate-800 mb-2">FMA (Fugl-Meyer Assessment)</h2>
+                        <p className="text-slate-600 mb-4 text-sm">운동 기능 정량 평가의 표준 지표입니다. (총점: 상지 66점 + 하지 34점 = 100점)</p>
+
+                        <div className="sticky top-0 bg-white/95 backdrop-blur-md py-3 sm:py-4 border-b border-slate-200 z-10 flex justify-between items-end mb-6 shadow-sm">
+                            <div>
+                                <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Score</div>
+                                <div className="text-3xl font-extrabold text-teal-600">{fmaTotal} <span className="text-lg text-slate-400">/ 100</span></div>
+                            </div>
+                            <div className="text-right text-xs sm:text-sm">
+                                <span className="text-slate-500">상지: </span><span className="font-bold text-teal-700">{fmaUETotal}</span>
+                                <span className="mx-2 text-slate-300">|</span>
+                                <span className="text-slate-500">하지: </span><span className="font-bold text-indigo-700">{fmaLETotal}</span>
+                            </div>
+                        </div>
+
+                        <h3 className="text-lg font-bold text-teal-800 mb-4 flex items-center bg-teal-50 p-3 rounded-lg"><Activity size={20} className="mr-2"/> 상지 부문 (Upper Extremity)</h3>
+                        <div className="space-y-6 mb-10">
+                            {fmaUEData.map((section, sIdx) => (
+                                <div key={`ue-sec-${sIdx}`} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                    <div className="bg-slate-50 border-b border-slate-200 px-4 py-2 text-sm font-bold text-teal-700">
+                                        {section.section}
+                                    </div>
+                                    <div className="px-4 py-2">
+                                        {section.items.map((item, iIdx) => (
+                                            <div key={`ue-item-${item.idx}`} className={`flex flex-col sm:flex-row sm:items-center justify-between py-3 ${iIdx !== section.items.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                                                <div className="text-[13px] sm:text-sm font-medium text-slate-700 mb-2 sm:mb-0 sm:pr-4 flex-1">
+                                                    {item.label}
+                                                </div>
+                                                <div className="flex space-x-1 w-full sm:w-48 flex-shrink-0">
+                                                    {[0, 1, 2].map((val) => (
+                                                        <ScorePill key={val} val={val} current={fmaUE[item.idx]} onClick={() => handleFmaUEChange(item.idx, val)} typeColor="teal" />
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <h3 className="text-lg font-bold text-indigo-800 mb-4 flex items-center bg-indigo-50 p-3 rounded-lg"><Activity size={20} className="mr-2"/> 하지 부문 (Lower Extremity)</h3>
+                        <div className="space-y-6">
+                            {fmaLEData.map((section, sIdx) => (
+                                <div key={`le-sec-${sIdx}`} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                    <div className="bg-slate-50 border-b border-slate-200 px-4 py-2 text-sm font-bold text-indigo-700">
+                                        {section.section}
+                                    </div>
+                                    <div className="px-4 py-2">
+                                        {section.items.map((item, iIdx) => (
+                                            <div key={`le-item-${item.idx}`} className={`flex flex-col sm:flex-row sm:items-center justify-between py-3 ${iIdx !== section.items.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                                                <div className="text-[13px] sm:text-sm font-medium text-slate-700 mb-2 sm:mb-0 sm:pr-4 flex-1">
+                                                    {item.label}
+                                                </div>
+                                                <div className="flex space-x-1 w-full sm:w-48 flex-shrink-0">
+                                                    {[0, 1, 2].map((val) => (
+                                                        <ScorePill key={val} val={val} current={fmaLE[item.idx]} onClick={() => handleFmaLEChange(item.idx, val)} typeColor="indigo" />
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderBBS = () => {
+                const bbsItems = [
+                    "1. 앉기에서 일어서기", "2. 잡지 않고 서 있기", "3. 등받이 기대지 않고 앉기", 
+                    "4. 서기에서 앉기", "5. 이동(Transfer)", "6. 눈 감고 서 있기", 
+                    "7. 두 발 모아 서 있기", "8. 팔 앞으로 뻗기", "9. 바닥의 물건 줍기", 
+                    "10. 좌우 뒤돌아보기", "11. 360도 회전", "12. 발판에 발 번갈아 올리기", 
+                    "13. 한 발 앞에 두고 서기 (Tandem)", "14. 한 발 서기"
+                ];
+
+                return (
+                    <div className="p-4 sm:p-6 pb-6 max-w-2xl mx-auto animation-fade-in">
+                        <h2 className="text-2xl font-bold text-slate-800 mb-2">BBS (Berg Balance Scale)</h2>
+                        <p className="text-slate-600 mb-4 text-sm">동적/정적 균형 및 낙상 위험도를 평가합니다. (총 56점)</p>
+
+                        <div className="sticky top-0 bg-white/90 backdrop-blur-md py-4 border-b border-slate-200 z-10 flex justify-between items-center mb-6">
+                            <div className="text-sm font-bold text-slate-500 uppercase tracking-wider">Total Score</div>
+                            <div className="text-3xl font-extrabold text-orange-600">{bbsTotal} <span className="text-lg text-slate-400">/ 56</span></div>
+                        </div>
+
+                        <div className="space-y-4">
+                            {bbsItems.map((label, idx) => (
+                                <div key={idx} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                                    <div className="text-sm font-bold text-slate-800 mb-3">{label}</div>
+                                    <div className="flex space-x-1 sm:space-x-2">
+                                        {[0, 1, 2, 3, 4].map((val) => (
+                                            <button
+                                                key={val}
+                                                onClick={() => handleBbsChange(idx, val)}
+                                                className={`flex-1 py-2 sm:py-3 text-sm font-bold rounded border transition-all ${
+                                                    bbsScore[idx] === val 
+                                                        ? 'bg-orange-500 border-orange-600 text-white shadow-md transform scale-105' 
+                                                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                                                }`}
+                                            >
+                                                {val}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderSummary = () => {
+                let bbsAlert = "";
+                let bbsColor = "text-slate-600";
+                if (bbsTotal > 0) {
+                    if (bbsTotal < 21) { bbsAlert = "낙상 초고위험군 (휠체어 의존 및 전적인 보조 필요)"; bbsColor = "text-red-600"; }
+                    else if (bbsTotal < 41) { bbsAlert = "낙상 중등도 위험 (보행 보조기 및 감독 필요)"; bbsColor = "text-orange-600"; }
+                    else if (bbsTotal < 45) { bbsAlert = "잠재적 낙상 위험군 (균형 훈련 필수 포함)"; bbsColor = "text-yellow-600"; }
+                    else { bbsAlert = "낙상 저위험 (독립적인 지역사회 보행 가능)"; bbsColor = "text-green-600"; }
+                }
+
+                let fmaAlert = "";
+                if (fmaTotal > 0) {
+                    if (fmaTotal <= 49) fmaAlert = "심각한 운동 기능 손상 (Severe) - 공동운동 의존";
+                    else if (fmaTotal <= 84) fmaAlert = "중등도 손상 (Moderate) - 분리운동 시작 단계";
+                    else if (fmaTotal <= 95) fmaAlert = "경미한 손상 (Mild) - 분리운동 및 협응력 호전";
+                    else fmaAlert = "정상 범위 (Normal)";
+                }
+
+                const ResultCard = ({ title, score, max, alert, color, icon: Icon, children }) => (
+                    <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 mb-4">
+                        <div className="flex items-center mb-4">
+                            <div className={`p-2 rounded-lg bg-${color}-50 text-${color}-600 mr-3`}>
+                                <Icon size={24} />
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-800">{title}</h3>
+                        </div>
+                        
+                        {score !== null && max && (
+                            <div className="flex items-end mb-2">
+                                <span className={`text-4xl font-extrabold text-${color}-600 leading-none`}>{score}</span>
+                                <span className="text-lg text-slate-400 ml-1 mb-1">/ {max}</span>
+                            </div>
+                        )}
+                        
+                        {alert && (
+                            <div className={`mt-3 p-3 rounded-lg bg-${color}-50 border border-${color}-100 flex items-start`}>
+                                <AlertCircle size={18} className={`mr-2 flex-shrink-0 mt-0.5 text-${color}-600`} />
+                                <p className={`text-sm font-semibold ${bbsColor === 'text-red-600' && title === 'BBS' ? 'text-red-700' : `text-${color}-800`}`}>
+                                    {alert}
+                                </p>
+                            </div>
+                        )}
+                        {children}
+                    </div>
+                );
+
+                return (
+                    <div className="p-4 sm:p-6 pb-6 max-w-2xl mx-auto animation-fade-in bg-slate-50 min-h-screen">
+                        <h2 className="text-2xl font-extrabold text-slate-800 mb-6 flex items-center">
+                            <BarChart className="mr-2 text-blue-600" /> 임상 평가 결과 요약
+                        </h2>
+
+                        <button 
+                            onClick={exportToImage} 
+                            disabled={isExporting}
+                            className={`w-full mb-6 py-4 px-4 rounded-xl flex items-center justify-center font-bold text-white transition-all shadow-md
+                                ${isExporting ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 active:scale-[0.98]'}`}
+                        >
+                            {isExporting ? (
+                                <><Loader className="animate-spin mr-2" size={22} /> 이미지 생성 중...</>
+                            ) : (
+                                <><Download className="mr-2" size={22} /> 이 화면을 이미지로 저장하기</>
+                            )}
+                        </button>
+
+                        <div id="result-summary-capture" className="p-2 -m-2 bg-slate-50 rounded-xl">
+                            <ResultCard title="MAS (근긴장도)" color="blue" icon={Activity}>
+                                {masScore ? (
+                                    <p className="text-lg font-bold text-blue-700 mt-2">Grade {masScore}</p>
+                                ) : <p className="text-sm text-slate-400">평가 데이터가 없습니다.</p>}
+                            </ResultCard>
+
+                            <ResultCard title="BRS (회복 단계)" color="indigo" icon={LayoutList}>
+                                {brsScore.arm || brsScore.hand || brsScore.leg ? (
+                                    <div className="grid grid-cols-3 gap-2 mt-3">
+                                        <div className="bg-indigo-50 p-3 rounded-lg text-center">
+                                            <div className="text-xs text-indigo-500 font-bold mb-1">상지</div>
+                                            <div className="text-xl font-extrabold text-indigo-700">{brsScore.arm || '-'}</div>
+                                        </div>
+                                        <div className="bg-indigo-50 p-3 rounded-lg text-center">
+                                            <div className="text-xs text-indigo-500 font-bold mb-1">손</div>
+                                            <div className="text-xl font-extrabold text-indigo-700">{brsScore.hand || '-'}</div>
+                                        </div>
+                                        <div className="bg-indigo-50 p-3 rounded-lg text-center">
+                                            <div className="text-xs text-indigo-500 font-bold mb-1">하지</div>
+                                            <div className="text-xl font-extrabold text-indigo-700">{brsScore.leg || '-'}</div>
+                                        </div>
+                                    </div>
+                                ) : <p className="text-sm text-slate-400">평가 데이터가 없습니다.</p>}
+                            </ResultCard>
+
+                            <ResultCard title="FMA (운동 기능)" score={fmaTotal} max="100" alert={fmaAlert} color="teal" icon={ListChecks}>
+                                 {(fmaUETotal > 0 || fmaLETotal > 0) && (
+                                    <div className="mt-3 text-sm text-slate-600 flex justify-between bg-slate-50 p-2 rounded">
+                                        <span>상지 소계: <strong>{fmaUETotal}</strong>점</span>
+                                        <span>하지 소계: <strong>{fmaLETotal}</strong>점</span>
+                                    </div>
+                                 )}
+                            </ResultCard>
+
+                            <ResultCard title="BBS (균형 및 낙상)" score={bbsTotal} max="56" alert={bbsAlert} color="orange" icon={Scale} />
+                            
+                            <div className="bg-amber-50 p-5 rounded-2xl shadow-sm border border-amber-200 mb-4 mt-6">
+                                <h3 className="text-[15px] sm:text-lg font-bold text-amber-800 mb-3 flex items-center">
+                                    <Lightbulb size={20} className="mr-2 flex-shrink-0" /> 학생 임상 실습 가이드 (FMA 손목/손 평가)
+                                </h3>
+                                <div className="space-y-4 text-sm text-amber-900 leading-relaxed">
+                                    <div>
+                                        <strong className="block text-amber-800 mb-1.5 flex items-center">
+                                            <span className="mr-1">🗣️</span> 명확한 지시어 (Verbal Commands)
+                                        </strong>
+                                        <ul className="list-disc pl-5 space-y-1">
+                                            <li><strong>집단 굽힘:</strong> "주먹을 꽉 쥐어보세요."</li>
+                                            <li><strong>집단 폄:</strong> "손가락을 쫙 펴보세요."</li>
+                                            <li><strong>측면 쥐기:</strong> "엄지와 검지 옆면으로 종이를 꽉 잡아보세요." <span className="text-amber-700">(종이를 당기며 저항 검사)</span></li>
+                                            <li><strong>원통/구형 쥐기:</strong> "컵(또는 공)을 꽉 쥐고 제가 빼앗지 못하게 버티세요."</li>
+                                        </ul>
+                                    </div>
+                                    <div className="pt-2 border-t border-amber-200/60">
+                                        <strong className="block text-amber-800 mb-1.5 flex items-center">
+                                            <span className="mr-1">⚠️</span> 채점 시 주의할 보상작용 (Compensations)
+                                        </strong>
+                                        <ul className="list-disc pl-5 space-y-1">
+                                            <li>
+                                                <strong>건고정 효과 (Tenodesis effect):</strong> 환자에게 손가락을 펴보라고 지시할 때, 수의적인 폄근 수축이 아니라 <strong>손목을 강하게 굽히면서(Wrist flexion) 인대의 장력에 의해 손가락이 수동적으로 펴지는 현상</strong>을 수의적 폄으로 오인하지 않도록 주의하세요. 반드시 손목을 중립에 고정하고 평가해야 합니다.
+                                            </li>
+                                            <li className="pt-1">
+                                                <strong>몸통 보상:</strong> 손을 뻗거나 쥘 때 몸통을 앞으로 기울이거나 어깨를 과도하게 으쓱이는지(Elevation) 확인하세요.
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="text-center text-[10px] text-slate-400 mt-4 font-medium">
+                                Generated by Stroke Evaluation (Evidence-Based Assessment)
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-50 font-sans text-slate-900 pb-safe flex flex-col">
+                    
+                    {/* Header */}
+                    <header className="bg-white border-b border-slate-200 px-3 sm:px-4 py-3 shadow-sm sticky top-0 z-50">
+                        <div className="max-w-2xl mx-auto flex justify-between items-center">
+                            <h1 className="flex flex-col">
+                                <div className="flex items-center text-[15px] sm:text-xl font-extrabold text-blue-800 tracking-tight">
+                                    <Activity className="mr-1.5 sm:mr-2 text-blue-600 flex-shrink-0" size={18} />
+                                    <span className="truncate">Stroke Evaluation</span>
+                                </div>
+                                <span className="text-[10px] sm:text-[13px] text-blue-600 font-bold mt-0.5 ml-6 sm:ml-7">
+                                    (Evidence-Based Assessment)
+                                </span>
+                            </h1>
+                            
+                            <div className="flex items-center space-x-2 sm:space-x-4">
+                                <div className="text-right flex-shrink-0">
+                                    <span className="block text-[10px] sm:text-[11px] text-slate-500 font-medium leading-tight mb-0.5">안산대학교 물리치료학과</span>
+                                    <span className="block text-xs sm:text-sm font-bold text-slate-800 leading-tight">심경섭 교수</span>
+                                </div>
+                                <button 
+                                    onClick={handleReset} 
+                                    className="p-2 sm:p-2.5 bg-slate-100 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors flex-shrink-0 shadow-sm"
+                                    title="새로운 환자 평가 (모든 데이터 초기화)"
+                                >
+                                    <RotateCcw size={18} />
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Main Content */}
+                    <main className="w-full flex-1">
+                        {activeTab === 'MAS' && renderMAS()}
+                        {activeTab === 'BRS' && renderBRS()}
+                        {activeTab === 'FMA' && renderFMA()}
+                        {activeTab === 'BBS' && renderBBS()}
+                        {activeTab === 'RESULT' && renderSummary()}
+                        
+                        <div style={{ height: '140px' }} className="w-full block clear-both"></div>
+                    </main>
+
+                    {/* Bottom Nav */}
+                    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-50">
+                        <div className="flex justify-around items-end max-w-md mx-auto h-16 sm:h-18 px-1 pb-safe-bottom">
+                            <TabButton id="MAS" icon={Activity} label="MAS" />
+                            <TabButton id="BRS" icon={LayoutList} label="BRS" />
+                            <TabButton id="FMA" icon={ListChecks} label="FMA" />
+                            <TabButton id="BBS" icon={Scale} label="BBS" />
+                            <TabButton id="RESULT" icon={BarChart} label="결과 요약" />
+                        </div>
+                    </nav>
                 </div>
-                <div className="bg-indigo-50 p-3 rounded-lg text-center">
-                  <div className="text-xs text-indigo-500 font-bold mb-1">손</div>
-                  <div className="text-xl font-extrabold text-indigo-700">{brsScore.hand || '-'}</div>
-                </div>
-                <div className="bg-indigo-50 p-3 rounded-lg text-center">
-                  <div className="text-xs text-indigo-500 font-bold mb-1">하지</div>
-                  <div className="text-xl font-extrabold text-indigo-700">{brsScore.leg || '-'}</div>
-                </div>
-              </div>
-            ) : <p className="text-sm text-slate-400">평가 데이터가 없습니다.</p>}
-          </ResultCard>
+            );
+        }
 
-          <ResultCard title="FMA (운동 기능)" score={fmaTotal} max="100" alert={fmaAlert} color="teal" icon={ListChecks}>
-             {(fmaUETotal > 0 || fmaLETotal > 0) && (
-                <div className="mt-3 text-sm text-slate-600 flex justify-between bg-slate-50 p-2 rounded">
-                  <span>상지 소계: <strong>{fmaUETotal}</strong>점</span>
-                  <span>하지 소계: <strong>{fmaLETotal}</strong>점</span>
-                </div>
-             )}
-          </ResultCard>
-
-          <ResultCard title="BBS (균형 및 낙상)" score={bbsTotal} max="56" alert={bbsAlert} color="orange" icon={Scale} />
-          
-          {/* 추가된 임상 실습 가이드 (FMA 손/손목) */}
-          <div className="bg-amber-50 p-5 rounded-2xl shadow-sm border border-amber-200 mb-4 mt-6">
-            <h3 className="text-[15px] sm:text-lg font-bold text-amber-800 mb-3 flex items-center">
-              <Lightbulb size={20} className="mr-2 flex-shrink-0" /> 학생 임상 실습 가이드 (FMA 손목/손 평가)
-            </h3>
-            <div className="space-y-4 text-sm text-amber-900 leading-relaxed">
-              <div>
-                <strong className="block text-amber-800 mb-1.5 flex items-center">
-                  <span className="mr-1">🗣️</span> 명확한 지시어 (Verbal Commands)
-                </strong>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li><strong>집단 굽힘:</strong> "주먹을 꽉 쥐어보세요."</li>
-                  <li><strong>집단 폄:</strong> "손가락을 쫙 펴보세요."</li>
-                  <li><strong>측면 쥐기:</strong> "엄지와 검지 옆면으로 종이를 꽉 잡아보세요." <span className="text-amber-700">(종이를 당기며 저항 검사)</span></li>
-                  <li><strong>원통/구형 쥐기:</strong> "컵(또는 공)을 꽉 쥐고 제가 빼앗지 못하게 버티세요."</li>
-                </ul>
-              </div>
-              <div className="pt-2 border-t border-amber-200/60">
-                <strong className="block text-amber-800 mb-1.5 flex items-center">
-                  <span className="mr-1">⚠️</span> 채점 시 주의할 보상작용 (Compensations)
-                </strong>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li>
-                    <strong>건고정 효과 (Tenodesis effect):</strong> 환자에게 손가락을 펴보라고 지시할 때, 수의적인 폄근 수축이 아니라 <strong>손목을 강하게 굽히면서(Wrist flexion) 인대의 장력에 의해 손가락이 수동적으로 펴지는 현상</strong>을 수의적 폄으로 오인하지 않도록 주의하세요. 반드시 손목을 중립에 고정하고 평가해야 합니다.
-                  </li>
-                  <li className="pt-1">
-                    <strong>몸통 보상:</strong> 손을 뻗거나 쥘 때 몸통을 앞으로 기울이거나 어깨를 과도하게 으쓱이는지(Elevation) 확인하세요.
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          {/* 이미지 저장 시 포함될 하단 워터마크 */}
-          <div className="text-center text-[10px] text-slate-400 mt-4 font-medium">
-            Generated by Stroke Evaluation (Evidence-Based Assessment)
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 pb-safe">
-      
-      {/* App Header with Professor's Info & Reset Button */}
-      <header className="bg-white border-b border-slate-200 px-3 sm:px-4 py-3 shadow-sm sticky top-0 z-50">
-        <div className="max-w-2xl mx-auto flex justify-between items-center">
-          <h1 className="flex flex-col">
-            <div className="flex items-center text-[15px] sm:text-xl font-extrabold text-blue-800 tracking-tight">
-              <Activity className="mr-1.5 sm:mr-2 text-blue-600 flex-shrink-0" size={18} />
-              <span className="truncate">Stroke Evaluation</span>
-            </div>
-            <span className="text-[10px] sm:text-[13px] text-blue-600 font-bold mt-0.5 ml-6 sm:ml-7">
-              (Evidence-Based Assessment)
-            </span>
-          </h1>
-          
-          <div className="flex items-center space-x-2 sm:space-x-4">
-            <div className="text-right flex-shrink-0">
-              <span className="block text-[10px] sm:text-[11px] text-slate-500 font-medium leading-tight mb-0.5">안산대학교 물리치료학과</span>
-              <span className="block text-xs sm:text-sm font-bold text-slate-800 leading-tight">심경섭 교수</span>
-            </div>
-            {/* 데이터 초기화 버튼 */}
-            <button 
-              onClick={handleReset} 
-              className="p-2 sm:p-2.5 bg-slate-100 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors flex-shrink-0 shadow-sm"
-              title="새로운 환자 평가 (모든 데이터 초기화)"
-            >
-              <RotateCcw size={18} />
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Dynamic Content Rendering */}
-      <main className="w-full">
-        {activeTab === 'MAS' && renderMAS()}
-        {activeTab === 'BRS' && renderBRS()}
-        {activeTab === 'FMA' && renderFMA()}
-        {activeTab === 'BBS' && renderBBS()}
-        {activeTab === 'RESULT' && renderSummary()}
-        
-        {/* 하단 네비게이션 바 짤림 방지 강제 여백 */}
-        <div style={{ height: '140px' }} className="w-full block clear-both"></div>
-      </main>
-
-      {/* Bottom Navigation Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-50">
-        <div className="flex justify-around items-end max-w-md mx-auto h-16 sm:h-18 px-1 pb-safe-bottom">
-          <TabButton id="MAS" icon={Activity} label="MAS" />
-          <TabButton id="BRS" icon={LayoutList} label="BRS" />
-          <TabButton id="FMA" icon={ListChecks} label="FMA" />
-          <TabButton id="BBS" icon={Scale} label="BBS" />
-          <TabButton id="RESULT" icon={BarChart} label="결과 요약" />
-        </div>
-      </nav>
-
-      <style dangerouslySetInnerHTML={{__html: `
+        // ==========================================
+        // 렌더링
+        // ==========================================
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+    
+    <style>
         .pb-safe { padding-bottom: env(safe-area-inset-bottom, 20px); }
         .pb-safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
         .animation-fade-in { animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
-      `}} />
-    </div>
-  );
-}
+    </style>
+</body>
+</html>
